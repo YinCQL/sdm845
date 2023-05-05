@@ -59,8 +59,6 @@
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
 #endif
-#include <drm/drm_notifier.h>
-#include <drm/drm_panel.h>
 #ifdef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
 #include <../xiaomi/xiaomi_touch.h>
 #endif
@@ -204,6 +202,7 @@ static void drm_regulator_ctrl(struct synaptics_rmi4_data *rmi4_data, unsigned i
 static void drm_reset_ctrl(const struct synaptics_dsx_board_data *bdata, bool on);
 static void drm_reset_action(const struct synaptics_dsx_board_data *bdata);
 
+struct drm_panel *syna_active_panel;
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #ifndef CONFIG_DRM
 #define USE_EARLYSUSPEND
@@ -5509,11 +5508,14 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
 		rmi4_data->drm_notifier.notifier_call = synaptics_rmi4_drm_notifier_cb;
 	else
 		rmi4_data->drm_notifier.notifier_call = synaptics_rmi4_drm_notifier_cb_tddi;
-	retval = drm_register_client(&rmi4_data->drm_notifier);
-	if (retval < 0) {
-		dev_err(&pdev->dev,
-				"%s: Failed to register fb notifier client\n",
-				__func__);
+	if (syna_active_panel) {
+		retval = drm_panel_notifier_register(syna_active_panel,
+				&rmi4_data->drm_notifier);
+		if (retval < 0) {
+			dev_err(&pdev->dev,
+					"%s: Failed to register fb notifier client\n",
+					__func__);
+		}
 	}
 #endif
 
@@ -5708,7 +5710,9 @@ err_virtual_buttons:
 
 err_enable_irq:
 #ifdef CONFIG_DRM
-	drm_unregister_client(&rmi4_data->drm_notifier);
+	if (syna_active_panel)
+		drm_panel_notifier_unregister(syna_active_panel,
+				&rmi4_data->drm_notifier);
 #endif
 
 #ifdef USE_EARLYSUSPEND
@@ -5807,7 +5811,9 @@ static int synaptics_rmi4_remove(struct platform_device *pdev)
 	synaptics_rmi4_irq_enable(rmi4_data, false, false);
 
 #ifdef CONFIG_DRM
-	drm_unregister_client(&rmi4_data->drm_notifier);
+	if (syna_active_panel)
+		drm_panel_notifier_unregister(syna_active_panel,
+				&rmi4_data->drm_notifier);
 #endif
 
 #ifdef USE_EARLYSUSPEND
@@ -6126,65 +6132,42 @@ static void synaptics_rmi4_wakeup_gesture(struct synaptics_rmi4_data *rmi4_data,
 static int synaptics_rmi4_drm_notifier_cb(struct notifier_block *self,
 		unsigned long event, void *data)
 {
-	int *transition;
-	struct drm_notify_data *evdata = data;
+	int transition;
+	struct drm_panel_notifier *evdata = data;
 	struct synaptics_rmi4_data *rmi4_data =
 			container_of(self, struct synaptics_rmi4_data,
 			drm_notifier);
 
-	const struct synaptics_dsx_board_data *bdata = NULL;
-
-	if (rmi4_data->hw_if->board_data)
-		bdata = rmi4_data->hw_if->board_data;
-	else
+	if (!evdata)
 		return 0;
 
-	/* Receive notifications from primary panel only */
-	if (evdata && evdata->data && rmi4_data && evdata->is_primary) {
-		if (event == DRM_EVENT_BLANK) {
-			transition = evdata->data;
-			if (*transition == DRM_BLANK_POWERDOWN) {
-				synaptics_rmi4_suspend(&rmi4_data->pdev->dev);
+	if (evdata && evdata->data && rmi4_data) {
+		if (event == DRM_PANEL_EARLY_EVENT_BLANK) {
+			synaptics_secure_touch_stop(rmi4_data, 0);
+			transition = *(int *)evdata->data;
+			if (transition == DRM_PANEL_BLANK_POWERDOWN) {
+				if (rmi4_data->ss_initialized)
+					synaptics_rmi4_suspend(
+							&rmi4_data->pdev->dev);
 				rmi4_data->fb_ready = false;
-			} else if (*transition == DRM_BLANK_UNBLANK) {
-				synaptics_rmi4_resume(&rmi4_data->pdev->dev);
-				rmi4_data->fb_ready = true;
-				if (rmi4_data->wakeup_en) {
-					drm_panel_reset_skip_enable(false);
-					//drm_regulator_ctrl(rmi4_data, DISP_REG_ALL, false);
-					drm_dsi_ulps_enable(false);
-					rmi4_data->wakeup_en = false;
-				}
-
-				rmi4_data->disable_data_dump = false;
-			}
-		} else if (event == DRM_EARLY_EVENT_BLANK) {
-			transition = evdata->data;
-			if (*transition == DRM_BLANK_POWERDOWN) {
-				rmi4_data->disable_data_dump = true;
-				if (rmi4_data->dump_flags) {
-					reinit_completion(&rmi4_data->dump_completion);
-					wait_for_completion_timeout(&rmi4_data->dump_completion, 4 * HZ);
-				}
-
-				if (rmi4_data->enable_wakeup_gesture) {
-					rmi4_data->wakeup_en = true;
-					//drm_regulator_ctrl(rmi4_data, DISP_REG_ALL, true);
-					drm_panel_reset_skip_enable(true);
-					drm_dsi_ulps_enable(true);
-				}
-			} else if (*transition == DRM_BLANK_UNBLANK) {
-				if (bdata->reset_gpio >= 0 && rmi4_data->suspend) {
-					gpio_set_value(bdata->reset_gpio, bdata->reset_on_state);
-					msleep(bdata->reset_active_ms);
-					gpio_set_value(bdata->reset_gpio, !bdata->reset_on_state);
-				}
-				if (rmi4_data->wakeup_en) {
-					drm_reset_action(bdata);
-				}
 			}
 		}
 	}
+
+	if (evdata && evdata->data && rmi4_data) {
+		if (event == DRM_PANEL_EVENT_BLANK) {
+			transition = *(int *)evdata->data;
+			if (transition == DRM_PANEL_BLANK_UNBLANK) {
+				if (rmi4_data->ss_initialized)
+					synaptics_rmi4_resume(
+							&rmi4_data->pdev->dev);
+				else
+					complete(&rmi4_data->drm_init_done);
+				rmi4_data->fb_ready = true;
+			}
+		}
+	}
+
 	return 0;
 }
 

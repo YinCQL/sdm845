@@ -1028,10 +1028,40 @@ static void synaptics_rmi4_i2c_dev_release(struct device *dev)
 	kfree(synaptics_dsx_i2c_device);
 }
 
+static int syna_get_active_panel(struct device_node *np)
+{
+	struct device_node *node;
+	struct drm_panel *panel;
+	int i, count;
+
+	count = of_count_phandle_with_args(np, "panel", NULL);
+	if (count <= 0)
+		return -EINVAL;
+
+	for (i = 0; i < count; i++) {
+		node = of_parse_phandle(np, "panel", i);
+		panel = of_drm_find_panel(node);
+		of_node_put(node);
+		if (!IS_ERR(panel)) {
+			syna_active_panel = panel;
+			return 0;
+		}
+	}
+
+	return -ENODEV;
+}
+
 static int synaptics_rmi4_i2c_probe(struct i2c_client *client,
 		const struct i2c_device_id *dev_id)
 {
 	int retval;
+
+	rc = syna_get_active_panel(client->dev.of_node);
+	if (rc < 0) {
+		dev_err(&client->dev, "%s: Active panel not found, aborting probe\n", __func__);
+		rc = -ENODEV;
+		goto exit;
+	}
 
 	if (!i2c_check_functionality(client->adapter,
 			I2C_FUNC_SMBUS_BYTE_DATA)) {

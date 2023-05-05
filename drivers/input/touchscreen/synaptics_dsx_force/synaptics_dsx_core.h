@@ -54,6 +54,8 @@
 #include <linux/clk.h>
 #endif
 
+#include <drm/drm_panel.h>
+
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 38))
 #define KERNEL_ABOVE_2_6_38
 #endif
@@ -141,6 +143,8 @@ enum exp_fn {
 	RMI_DEBUG,
 	RMI_LAST,
 };
+
+extern struct drm_panel *syna_active_panel;
 
 /*
  * struct synaptics_rmi4_fn_desc - function descriptor fields in PDT entry
@@ -360,6 +364,7 @@ struct synaptics_rmi4_data {
 	struct mutex rmi4_exp_init_mutex;
 	struct mutex rmi4_cover_mutex;
 	struct mutex rmi4_irq_enable_mutex;
+	struct completion drm_init_done;
 	struct delayed_work rb_work;
 	struct workqueue_struct *rb_workqueue;
 	struct synaptics_dsx_panel_power_seq panel_power_seq;
