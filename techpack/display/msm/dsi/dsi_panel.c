@@ -758,7 +758,7 @@ int dsi_panel_update_backlight(struct dsi_panel *panel,
 	bl = &panel->bl_config;
 
 	if (panel->mi_cfg.bl_is_ss)
-		rc = mipi_dsi_dcs_set_display_brightness_big_endian(dsi, bl_lvl);
+		rc = mipi_dsi_dcs_set_display_brightness_ss(dsi, bl_lvl);
 	else
 		rc = mipi_dsi_dcs_set_display_brightness(dsi, bl_lvl);
 
