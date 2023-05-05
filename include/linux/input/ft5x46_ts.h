@@ -41,9 +41,10 @@
 #include <linux/kernel.h>
 #ifdef CONFIG_DRM
 #include <linux/notifier.h>
-#include <drm/drm_notifier.h>
 #include <drm/drm_panel.h>
 #endif
+
+extern struct drm_panel *ft5x46_active_panel;
 
 #define FT5X46_LOCKDOWN_INFO_SIZE	8
 #define FT5X46_CONFIG_INFO_SIZE	8

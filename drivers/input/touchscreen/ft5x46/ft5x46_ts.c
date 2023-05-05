@@ -186,6 +186,8 @@
 #define LEN_FLASH_ECC_MAX		0xFFFE
 #define FT5X46_ESD_CHECK_PERIOD	5000
 
+struct drm_panel *ft5x46_active_panel;
+
 static bool lcd_need_reset;
 static unsigned char proc_operate_mode = FT5X46_PROC_UPGRADE;
 static struct proc_dir_entry *ft5x46_proc_entry;
@@ -3115,7 +3117,7 @@ static int fb_notifier_cb(struct notifier_block *self,
 {
 	int *blank;
 	int rc = 0;
-	struct drm_notify_data *evdata = data;
+	struct drm_panel_notifier *evdata = data;
 	struct ft5x46_data *ft5x46 =
 		container_of(self, struct ft5x46_data, drm_notifier);
 
@@ -3124,16 +3126,15 @@ static int fb_notifier_cb(struct notifier_block *self,
 		return rc;
 	}
 	/* Receive notifications from primary panel only */
-	if (evdata && evdata->data && ft5x46 && evdata->is_primary) {
-		if (event == DRM_EVENT_BLANK) {
+	if (evdata && evdata->data && ft5x46) {
+		if (event == DRM_PANEL_EVENT_BLANK) {
 			blank = evdata->data;
-			if (*blank == DRM_BLANK_UNBLANK) {
+			if (*blank == DRM_PANEL_BLANK_UNBLANK) {
 				dev_dbg(ft5x46->dev, "##### UNBLANK SCREEN #####\n");
 				ft5x46_input_enable(ft5x46->input);
 				if (!ft5x46->wakeup_mode)
 					rc = ft5x46_panel_power(ft5x46, true);
-				drm_dsi_ulps_enable(false);
-			} else if (*blank == DRM_BLANK_POWERDOWN) {
+			} else if (*blank == DRM_PANEL_BLANK_POWERDOWN) {
 				dev_dbg(ft5x46->dev, "##### BLANK SCREEN #####\n");
 				ft5x46_input_disable(ft5x46->input);
 #ifdef CONFIG_TOUCHSCREEN_FT5X46P_PROXIMITY
@@ -3143,16 +3144,15 @@ static int fb_notifier_cb(struct notifier_block *self,
 #endif
 					rc = ft5x46_panel_power(ft5x46, false);
 			}
-		} else if (event == DRM_EARLY_EVENT_BLANK) {
+		} else if (event == DRM_PANEL_EARLY_EVENT_BLANK) {
 			blank = evdata->data;
 #ifdef CONFIG_TOUCHSCREEN_FT5X46P_PROXIMITY
-			if (*blank == DRM_BLANK_POWERDOWN &&
+			if (*blank == DRM_PANEL_BLANK_POWERDOWN &&
 				(ft5x46->wakeup_mode || ft5x46->proximity_enable)) {
 #else
-			if (*blank == DRM_BLANK_POWERDOWN && ft5x46->wakeup_mode) {
+			if (*blank == DRM_PANEL_BLANK_POWERDOWN && ft5x46->wakeup_mode) {
 #endif
 				pr_debug("Enable suspend ulps\n");
-				drm_dsi_ulps_enable(true);
 			}
 		}
 	}
@@ -3165,18 +3165,20 @@ static int ft5x46_configure_sleep(struct ft5x46_data *ft5x46, bool enable)
 	int ret = 0;
 
 	ft5x46->drm_notifier.notifier_call = fb_notifier_cb;
+	if (ft5x46_active_panel) {
 	if (enable) {
-		ret = drm_register_client(&ft5x46->drm_notifier);
+		ret = drm_panel_notifier_register(ft5x46_active_panel, &ft5x46->drm_notifier);
 		if (ret) {
 			dev_err(ft5x46->dev,
 				"Unable to register fb_notifier, err: %d\n", ret);
 		}
 	} else {
-		ret = drm_unregister_client(&ft5x46->drm_notifier);
+		ret = drm_panel_notifier_unregister(ft5x46_active_panel, &ft5x46->drm_notifier);
 		if (ret) {
 			dev_err(ft5x46->dev,
 				"Unable to unregister fb_notifier, err: %d\n", ret);
 		}
+	}
 	}
 	return ret;
 }
